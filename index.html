@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <title>Generate a password</title>
+    <link rel="icon" type="image/x-icon" href="img/password-72x72.png">
+
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+    <script type="application/javascript" src="js/argon2-bundled.min.js"></script>
+    <script type="application/javascript" src="js/sjcl.js"></script>
+    <script type="application/javascript">
+        var clearValuesTimer;
+        var masterFingerPrintTimer;
+
+        function updateMasterFingerPrint() {
+            if (masterFingerPrintTimer) {
+                clearTimeout(masterFingerPrintTimer);
+            }
+            masterFingerPrintTimer = setTimeout(calculateMasterFingerPrint, 1000);
+        }
+
+        function calculateMasterFingerPrint() {
+            if (document.getElementById('master').value.length > 0) {
+                var hash = sjcl.hash.sha256.hash(document.getElementById('master').value.padStart(32, ' '));
+                var hex = sjcl.codec.hex.fromBits(hash);
+                document.getElementById('masterFingerPrint').innerText = hex.substring(0, 6);
+                document.getElementById('masterFingerPrint').style.opacity = 1;
+            } else {
+                document.getElementById('masterFingerPrint').innerText = '';
+                document.getElementById('masterFingerPrint').style.opacity = 0;
+            }
+        }
+
+        function hashAndEncode(value) {
+            var hash = sjcl.hash.sha256.hash(value.padStart(32, ' '));
+            return sjcl.codec.base64.fromBits(hash, 0, 0);
+        }
+
+        function generate() {
+            var passwordSha256Element = document.getElementById('passwordSha256');
+            var passwordSha256BackgroundElement = document.getElementById('passwordSha256Background');
+            passwordSha256Element.innerText = hashAndEncode(
+                document.getElementById('master').value + '|' +
+                document.getElementById('name').value + '|' +
+                document.getElementById('classifier').value).substring(0, 20);
+            passwordSha256BackgroundElement.style.backgroundImage = "url('img/password_blurred.png')";
+
+            var passwordArgon2Element = document.getElementById('passwordArgon2');
+            var passwordArgon2BackgroundElement = document.getElementById('passwordArgon2Background');
+            argon2.hash({
+                pass: document.getElementById('master').value,
+                salt: (document.getElementById('name').value + '|' + document.getElementById('classifier').value).padStart(8, ' '), // min length 8 characters, thus pad start if necessary
+                time: 100, // the number of iterations
+                mem: 1024, // used memory, in KiB
+                hashLen: 20, // desired hash length
+                parallelism: 1, // desired parallelism (it won't be computed in parallel, however)
+                type: argon2.ArgonType.Argon2id // Argon2d, Argon2i, Argon2id
+            })
+                .then(h => {
+                    var b64encoded = btoa(h.hashHex);
+                    passwordArgon2Element.innerText = b64encoded.substring(0, 20);
+                    passwordArgon2BackgroundElement.style.backgroundImage = "url('img/password_blurred.png')";
+                })
+                .catch(e => console.error(e.message, e.code));
+
+            if (clearValuesTimer) {
+                clearTimeout(clearValuesTimer);
+            }
+            clearValuesTimer = setTimeout(function () {
+                clearValues();
+            }, 60 * 1000);
+        }
+
+        function copyPassword(type) {
+            window.getSelection().selectAllChildren(document.getElementById('password' + type));
+            document.execCommand("copy");
+        }
+
+        function toggleMaster() {
+            if (document.getElementById('master').type === 'password') {
+                document.getElementById('master').type = 'text';
+                document.getElementById('masterEye').src = 'img/eye.png';
+            } else {
+                document.getElementById('master').type = 'password';
+                document.getElementById('masterEye').src = 'img/eye-off.png';
+            }
+        }
+
+        function togglePassword(type) {
+            var passwordElement = document.getElementById('password' + type);
+            var passwordBackgroundElement = document.getElementById('password' + type + 'Background');
+            var passwordEyeElement = document.getElementById('password' + type + 'Eye');
+
+            if (passwordElement.style.opacity === '0' || passwordElement.style.opacity == 0) {
+                passwordElement.style.opacity = 1;
+                passwordEyeElement.src = 'img/eye.png';
+                passwordBackgroundElement.style.backgroundImage = 'none';
+            } else {
+                passwordElement.style.opacity = 0;
+                passwordEyeElement.src = 'img/eye-off.png';
+                if (passwordElement.innerText.length > 0) {
+                    passwordBackgroundElement.style.backgroundImage = "url('img/password_blurred.png')";
+                } else {
+                    passwordBackgroundElement.style.backgroundImage = 'none';
+                }
+            }
+        }
+
+        function clearValues() {
+            document.getElementById('master').value = '';
+            document.getElementById('masterFingerPrint').innerText = '';
+            document.getElementById('masterFingerPrint').style.opacity = 0;
+            document.getElementById('name').value = '';
+            document.getElementById('classifier').value = '';
+            clearPasswords();
+        }
+
+        function clearPasswords() {
+            document.getElementById('passwordSha256').innerText = '';
+            document.getElementById('passwordSha256Background').style.backgroundImage = 'none';
+
+            document.getElementById('passwordArgon2').innerText = '';
+            document.getElementById('passwordArgon2Background').style.backgroundImage = 'none';
+        }
+
+        function verifyEncodedHash(expected, input) {
+            if (hashAndEncode(input) !== expected) {
+                alert('This browser calculates an incorrect encoded hash! Do no use the service in this browser!');
+            }
+        }
+
+        window.onload = function () {
+            // Run some tests to verify that the browser result is correct
+            verifyEncodedHash('FLN3EOw3mcUuV+78yOLUWB0k4acmT8ciSrUgg8pRCuA=', 'secret|facebook|test');
+            verifyEncodedHash('3U633uBAK/5IPNGBQamRqJWnudz9GUGoLy7ZMUx6JhA=', 'secret|twitter|');
+            verifyEncodedHash('pyFp5RGwSo3gW5vBS38+UzmYvr+tL8og1i2AFI6FqWw=', 'my super secret master password|some service|version 2');
+            verifyEncodedHash('v63wRDVwhfEmdkuKSkMgaZDyqDW1b5zPZ3pY+3/hpWs=', 'my super secret master password|some other service|production');
+
+            document.getElementById('master').focus();
+            var elements = document.getElementsByTagName('input');
+            for (var i = 0; i < elements.length; i++) {
+                elements[i].addEventListener('keyup', function (event) {
+                    if (event.keyCode === 13) {
+                        event.preventDefault();
+                        generate();
+                    }
+                });
+            }
+        };
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function () {
+                navigator.serviceWorker
+                    .register('serviceWorker.js')
+                    .then(res => console.log('service worker registered'))
+                    .catch(err => console.log('service worker not registered', err));
+            });
+        }
+    </script>
+    <style>
+        *, :after, :before {
+            -webkit-box-sizing: border-box;
+            -moz-box-sizing: border-box;
+            box-sizing: border-box;
+            font-family: 'Roboto', 'Arial', sans-serif;
+        }
+
+        body {
+            background: url('img/background.jpg') no-repeat center fixed;
+            background-size: cover;
+            min-height: 100vh;
+        }
+
+        h1 {
+            font-size: 3rem;
+            font-weight: 100;
+            text-align: center;
+        }
+
+        .main {
+            max-width: 50rem;
+            margin: auto;
+        }
+
+        .mainSteps {
+            font-size: 1.4rem;
+            margin-bottom: 1rem;
+        }
+
+        .detailsLinkPanel {
+            text-align: right;
+            font-size: 1rem;
+            margin: 0 1rem 3rem 0;
+        }
+
+        .relative {
+            position: relative;
+        }
+
+        li {
+            margin-bottom: 1rem;
+        }
+
+        input {
+            width: calc(100% - 4rem);
+            margin: 0.6rem;
+            border: 0;
+            border-bottom-width: 0.1rem;
+            border-bottom-style: solid;
+            border-bottom-color: gray;
+            font-size: 1rem;
+            background-color: transparent;
+        }
+
+        input.eyeMargin {
+            width: calc(100% - 4rem);
+        }
+
+        .eye {
+            width: 2.5rem;
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        #masterFingerPrint {
+            opacity: 0;
+            background: url('img/fingerprint.png') no-repeat center;
+            background-size: contain;
+            padding: 1.25rem;
+            font-size: 1.5rem;
+            text-align: center;
+            height: 4.25rem;
+        }
+
+        .buttonPanel {
+            text-align: center;
+        }
+
+        button {
+            border: 0;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            background: lightgray;
+            margin: 0.625rem;
+            padding: 0.5rem 1rem;
+            min-width: 7.5rem;
+            cursor: pointer;
+        }
+
+        .primary {
+            background-color: #488aff;
+            color: white;
+        }
+
+        .passwordPanel {
+            border: 0.1rem dashed black;
+            margin: 0.625rem;
+            width: calc(100% - 4rem);
+        }
+
+        .passwordBackground {
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            z-index: -1;
+            background: no-repeat center;
+            background-size: contain;
+        }
+
+        .password {
+            opacity: 0;
+            width: 100%;
+            margin: 0.625rem auto;
+            font-size: 1rem;
+            height: 1.25rem;
+            line-height: 1.25rem;
+            text-align: center;
+        }
+
+        .section {
+            margin-top: 3rem;
+            margin-left: 0.625rem;
+            margin-right: 0.625rem;
+        }
+
+        pre {
+            font-family: monospace;
+            margin: 0;
+            overflow-y: scroll;
+        }
+
+        table {
+            padding: 0.5rem;
+        }
+
+        tr {
+            margin: 0.25rem 0;
+        }
+
+        th {
+            text-align: left;
+        }
+
+        td {
+            padding: 0.25rem 0.5rem 0.25rem 0;
+        }
+
+        .referenceTitle {
+            font-weight: bold;
+        }
+
+        .referenceAuthor {
+
+        }
+
+        .referenceUrl {
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+<div class="main">
+    <h1>Generate a password</h1>
+    <div class="section">
+        <ol class="mainSteps">
+            <li>Enter master password</li>
+            <li>Enter service name (and possibly classifier)</li>
+            <li>Generate passwords</li>
+            <li>Use service password</li>
+        </ol>
+        <div class="detailsLinkPanel"><a href="#details">Details</a></div>
+        <div class="relative">
+            <input id="master" class="eyeMargin" type="password" placeholder="Master password"
+                   onkeyup="updateMasterFingerPrint(); clearPasswords();"/>
+            <img id="masterEye" class="eye" src="img/eye-off.png" onclick="toggleMaster();"/>
+        </div>
+        <div id="masterFingerPrint"></div>
+        <input id="name" type="text" placeholder="Service name" onchange="clearPasswords();"/><br/>
+        <input id="classifier" type="text" placeholder="Classifier (optional)" onchange="clearPasswords();"/><br/>
+        <div class="buttonPanel">
+            <button onclick="clearValues();">Clear</button>
+            <button class="primary" onclick="generate();">Generate</button>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Generated passwords</h2>
+
+        <h3>Argon2 - recommended</h3>
+        <div class="relative">
+            <div class="passwordPanel relative">
+                <div id="passwordArgon2Background" class="passwordBackground"></div>
+                <div id="passwordArgon2" class="password"></div>
+            </div>
+            <img id="passwordArgon2Eye" class="eye" src="img/eye-off.png" onclick="togglePassword('Argon2');"/>
+        </div>
+        <div class="buttonPanel">
+            <button class="primary" onclick="copyPassword('Argon2');">Copy password</button>
+        </div>
+
+        <h3>SHA256</h3>
+        <div class="relative">
+            <div class="passwordPanel relative">
+                <div id="passwordSha256Background" class="passwordBackground"></div>
+                <div id="passwordSha256" class="password"></div>
+            </div>
+            <img id="passwordSha256Eye" class="eye" src="img/eye-off.png" onclick="togglePassword('Sha256');"/>
+        </div>
+
+        <div class="buttonPanel">
+            <button class="primary" onclick="copyPassword('Sha256');">Copy password</button>
+        </div>
+    </div>
+
+    <div class="section">
+        <a id="details"><h2>Details</h2></a>
+
+        <h3>Steps</h3>
+        <ol>
+            <li>Enter your master password and check the fingerprint to prevent typos, without displaying the master
+                password in plain text
+            </li>
+            <li>Enter the name of the service for which you need a password. Keep this simple since you need to remember
+                it too. For instance: www.facebook.com, AD
+            </li>
+            <li>Optionally enter a service classifier, e.g. test, 2 (second password after expiration)</li>
+            <li><p>Press the <b>Generate</b> button and passwords based on Argon2 and SHA256 will be generated.
+                The passwords are determined by calculating a hash based on the master password, service name and
+                classifier and then encoding the hash with Base64.
+                The first 20 characters of the encoded string are then used as the service password.
+                The reasons for limiting the password length to 20 characters are:</p>
+                <ul>
+                    <li>The password should be possible to enter manually</li>
+                    <li>Only provide partial data to prevent a brute force attack on the master password</li>
+                </ul>
+                <p>All computations are performed in the browser and no data is sent to any server.</p>
+            </li>
+            <li>Chose the service password by clicking the <b>Copy Password</b> button or click the eye icon to show the
+                password in plain text.
+                Argon2 is recommended, but SHA256 is generated too for backward compatibility.
+            </li>
+            <li>All user data will be cleared 60 seconds after generating passwords</li>
+        </ol>
+
+        <h3>Hashing algorithms</h3>
+
+        <h4>Argon2</h4>
+        <p>The Argon2 service password is generated with the following properties:</p>
+        <table>
+            <tr>
+                <th>Property</th>
+                <th>Value</th>
+            </tr>
+            <tr>
+                <td>password:</td>
+                <td>
+                    <pre>&lt;master password&gt;</pre>
+                </td>
+            </tr>
+            <tr>
+                <td>salt:</td>
+                <td>
+                    <pre>&lt;service name&gt;|&lt;classifier&gt;</pre>
+                    (padded from the start with space if less than 8 characters)
+                </td>
+            </tr>
+            <tr>
+                <td>number of iterations:</td>
+                <td>100</td>
+            </tr>
+            <tr>
+                <td>used memory:</td>
+                <td>1024 KiB</td>
+            </tr>
+            <tr>
+                <td>hash length:</td>
+                <td>20</td>
+            </tr>
+            <tr>
+                <td>parallelism:</td>
+                <td>1</td>
+            </tr>
+            <tr>
+                <td>type:</td>
+                <td>Argon2id (hybrid version)</td>
+            </tr>
+        </table>
+
+        <h4>SHA256</h4>
+        <p>The SHA256 service password is generated by hashing the following:</p>
+        <pre>&lt;master password&gt;|&lt;service name&gt;|&lt;classifier&gt;</pre>
+        <p>(padded from the start by space if the length is less than 32 characters) with the SHA256 hashing algorithm.
+            The hash is then Base64 encoded and the first 20 characters of the encoded string are used as the service
+            password.
+        </p>
+    </div>
+
+    <div class="section">
+        <h2>References</h2>
+        <ul>
+            <li>
+                <div class="referenceTitle">Argon2 in browser</div>
+                <div class="referenceAuthor">antelle</div>
+                <div class="referenceUrl"><a href="https://github.com/antelle/argon2-browser">https://github.com/antelle/argon2-browser</a>
+                </div>
+            </li>
+            <li>
+                <div class="referenceTitle">Password Hashing Competition</div>
+                <div class="referenceUrl"><a
+                        href="https://www.password-hashing.net">https://www.password-hashing.net</a></div>
+            </li>
+            <li>
+                <div class="referenceTitle">Password Hashing: Scrypt, Bcrypt and ARGON2</div>
+                <div class="referenceAuthor">Michele Preziuso</div>
+                <div class="referenceUrl"><a
+                        href="https://medium.com/analytics-vidhya/password-hashing-pbkdf2-scrypt-bcrypt-and-argon2-e25aaf41598e">
+                    https://medium.com/analytics-vidhya/password-hashing-pbkdf2-scrypt-bcrypt-and-argon2-e25aaf41598e</a>
+                </div>
+            </li>
+            <li>
+                <div class="referenceTitle">Stanford Javascript Crypto Library (SJCL)</div>
+                <div class="referenceAuthor">Emily Stark, Mike Hamburg and Dan Boneh</div>
+                <div class="referenceUrl"><a
+                        href="https://crypto.stanford.edu/sjcl">https://crypto.stanford.edu/sjcl</a></div>
+            </li>
+            <li>
+                <div class="referenceTitle">Wikipedia: Argon2</div>
+                <div class="referenceUrl"><a href="https://en.wikipedia.org/wiki/Argon2">https://en.wikipedia.org/wiki/Argon2</a>
+                </div>
+            </li>
+        </ul>
+    </div>
+</div>
+</body>
+</html>
